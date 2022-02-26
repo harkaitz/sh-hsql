@@ -1,0 +1,323 @@
+#!/bin/sh -e
+#L:
+#L:  MIT License
+#L:  
+#l:  Bug reports, feature requests to gemini|https://harkadev.com/oss
+#l:  Copyright (c) 2022 Harkaitz Agirre, harkaitz.aguirre@gmail.com
+#L:
+#L:  Permission is hereby granted, free of charge, to any person obtaining
+#L:  a copy of this software and associated documentation files (the
+#L:  "Software"), to deal in the Software without restriction, including
+#L:  without limitation the rights to use, copy, modify, merge, publish,
+#L:  distribute, sublicense, and/or sell copies of the Software, and to
+#L:  permit persons to whom the Software is furnished to do so, subject to
+#L:  the following conditions:
+#L:
+#L:  The above copyright notice and this permission notice shall be
+#L:  included in all copies or substantial portions of the Software.
+#L:
+#L:  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#L:  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#L:  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#L:  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+#L:  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#L:  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+#L:  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+##:
+#h: Usage: $0 ...
+#h:
+#h: A simple wrapper around various SQL clients.
+#h:
+#h: Connection configuration:
+#h:
+#h:    -v      : Show honored environment variables.
+#h:    -U URL  : Set URL. [psql://][USERNAME:PASSWORD@][HOSTNAME][:PORT][/DATABASE].
+#h:    -S TYPE : Set URL from variables.
+#h:              mysql: HSQL_MYSQL_URL
+#h:              psql:  HSQL_PSQL_URL.
+#h:
+#h: Execute raw SQL statements:
+#h:
+#h:    -i         : Open interactive SQL terminal.
+#h:    -c COMMAND : Run SQL statement.
+#h:    -f FILE    : Run SQL file.
+#h:
+#h: Add users:
+#h:
+#h:    -u USER[=PASS] : Add user.
+#h:
+#h: Create databases and allow users to it:
+#h:
+#h:    -d DATABASE -d ... : Create databases.
+#h:    -a USER     -a ... : Allow user in created databases.
+#h:    -l                 : List databases.
+#h:    -b DATABASE        : Backup.
+#h:    -r DATABASE        : Remove.
+##:
+. hlog
+. hcfg
+. hstr
+. hterm
+. hpkg
+hsql() {
+    ## Parse command line arguments.
+    local OPTIND optopt= ops= user= pass= newdbs= allows= d= u= database=
+    while getopts "vU:S:icu:d:a:lb:r:f" optopt;do # OPTARG
+        local ops="${ops}${optopt}"
+        case $optopt in
+            U)   hsql_calc_variables "${OPTARG}";;
+            S)   case "${OPTARG}" in
+                     mysql) hsql_calc_variables "${HSQL_MYSQL_URL}" ;;
+                     psql)  hsql_calc_variables "${HSQL_PSQL_URL}"  ;;
+                 esac
+                 if test ! @"${HSQL_URL_PROTOCOL}" = @"${OPTARG}";then
+                     hlog fatal "Database of type ${OPTARG} not defined."
+                 fi
+                    
+                 ;;
+            u)   local user="`hstr optopt "${OPTARG}"`"
+                 local pass="`hstr optarg "${OPTARG}"`"
+                 ;;
+            a)   local allows="${allows} ${OPTARG}" ;;
+            d)   local newdbs="${newdbs} ${OPTARG}" ;;
+            b|r) local database="${OPTARG}"         ;;
+            \?) return 1;;
+        esac
+    done
+    shift $(( $OPTIND - 1 ))
+    ## Show honored environment variables.
+    case "${ops}" in *v*) hsql_show_variables;; esac
+    ## Operations.
+    case "${ops}" in *u*) hsql_"${HSQL_URL_PROTOCOL}"_useradd "${user}" "${pass}" ;; esac
+    for d in ${newdbs};do
+        hsql_"${HSQL_URL_PROTOCOL}"_new_database "${d}"
+        for u in ${allows};do
+            hsql_"${HSQL_URL_PROTOCOL}"_allow_user "${d}" "${u}"
+        done
+    done
+    case "${ops}" in *i*) hsql_"${HSQL_URL_PROTOCOL}"_interactive    ;; esac
+    case "${ops}" in
+        *c*) hsql_"${HSQL_URL_PROTOCOL}"_exec "$*"
+             ;;
+        *f*) for f in "$@";do
+                 hsql_"${HSQL_URL_PROTOCOL}"_exec "`cat "$f"`"
+             done
+             ;;
+    esac
+    case "${ops}" in *l*) hsql_"${HSQL_URL_PROTOCOL}"_list_databases ;; esac
+    case "${ops}" in
+        *b*) test -n "${database}" || hlog fatal "Please specify a database." 
+             hsql_"${HSQL_URL_PROTOCOL}"_dump_database "${database}"
+             ;;
+        *r*) hsql_"${HSQL_URL_PROTOCOL}"_drop_database "${database}"
+             ;;
+    esac
+}
+hsql_show_variables() {
+    printf '%-30s: %s\n' HSQL_MYSQL_URL    "${HSQL_MYSQL_URL}"
+    printf '%-30s: %s\n' HSQL_PSQL_URL     "${HSQL_PSQL_URL}"
+    printf '%-30s: %s\n' HSQL_URL          "${HSQL_URL}"
+    printf '%-30s: %s\n' HSQL_URL_PROTOCOL "${HSQL_URL_PROTOCOL}"
+    printf '%-30s: %s\n' HSQL_URL_USERNAME "${HSQL_URL_USERNAME}"
+    printf '%-30s: %s\n' HSQL_URL_PASSWORD "${HSQL_URL_PASSWORD}"
+    printf '%-30s: %s\n' HSQL_URL_DATABASE "${HSQL_URL_DATABASE}"
+    printf '%-30s: %s\n' HSQL_URL_HOST     "${HSQL_URL_HOST}"
+    printf '%-30s: %s\n' HSQL_URL_PORT     "${HSQL_URL_PORT}"
+}
+hsql_calc_variables() {
+    ## The connection URL.
+    HSQL_URL="${1:-${HSQL_URL}}"
+    ## Protocol.
+    HSQL_URL_PROTOCOL="`echo "${HSQL_URL}" | sed -n 's|://.*||p'`"
+    local s="`echo "${HSQL_URL}" | sed 's|.*://||'`"
+    ## Get user.
+    local u="`echo "${s}" | sed -n 's|@.*||p'`"
+    HSQL_URL_PASSWORD="`echo "${u}" | sed -n 's|.*:||p'`"
+    HSQL_URL_USERNAME="`echo "${u}" | sed    's|:.*||' `"
+    
+    local s="`echo "${s}" | sed 's|.*@||'`"
+    ## Split hostport and database.
+    local h="`echo "${s}" | sed    's|/.*||'`"
+    HSQL_URL_DATABASE="`echo "${s}" | sed -n 's|.*/||p'`"
+    ## Split host and port.
+    HSQL_URL_HOST="`echo "${h}" | sed    's|:.*||'`"
+    HSQL_URL_PORT="`echo "${h}" | sed -n 's|.*:||p'`"
+    ## Set defaults.
+    case "${HSQL_URL_PROTOCOL:-psql}" in
+        psql) HSQL_URL_PROTOCOL=psql
+              local def_username=postgres
+              local def_database=postgres
+              local def_host=127.0.0.1
+              local def_port=5432
+              ;;
+        mysql) HSQL_URL_PROTOCOL=mysql
+               local def_username=root
+               local def_database=
+               local def_host=127.0.0.1
+               local def_port=3306
+               ;;
+        *)    hlog fatal "Protocol '${HSQL_URL_PROTOCOL}' unsupported.";;
+    esac
+    HSQL_URL_USERNAME="${HSQL_URL_USERNAME:-${def_username}}"
+    HSQL_URL_DATABASE="${HSQL_URL_DATABASE:-${def_database}}"
+    HSQL_URL_HOST="${HSQL_URL_HOST:-${def_host}}"
+    HSQL_URL_PORT="${HSQL_URL_PORT:-${def_port}}"
+}
+
+
+## ---------------------------------------------------------------------------------
+## ---- PSQL -----------------------------------------------------------------------
+## ---------------------------------------------------------------------------------
+hsql_psql_interactive() {
+    if test -n "${HSQL_URL_PASSWORD}";then
+        export PGPASSWORD="${HSQL_URL_PASSWORD}"
+    fi
+    if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
+       test @"`whoami`"             = @"root"     && \
+       test @"${HSQL_URL_HOST}"     = @"127.0.0.1";then
+        hsql_sudo -u "postgres" psql "${HSQL_URL_DATABASE}"
+    else
+        psql                          \
+            -U "${HSQL_URL_USERNAME}" \
+            -h "${HSQL_URL_HOST}"     \
+            -p "${HSQL_URL_PORT}"     \
+            "${HSQL_URL_DATABASE}"
+    fi
+}
+hsql_psql_exec() {
+    if test -n "${HSQL_URL_PASSWORD}";then
+        export PGPASSWORD="${HSQL_URL_PASSWORD}"
+    fi
+    local cmd="$*"
+    if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
+       test @"`whoami`"             = @"root"     && \
+       test @"${HSQL_URL_HOST}"     = @"127.0.0.1";then
+        echo "${cmd}" | hsql_sudo -u "postgres" psql -a "${HSQL_URL_DATABASE}"
+    else
+        echo "${cmd}" | psql -a       \
+                             -U "${HSQL_URL_USERNAME}" \
+                             -h "${HSQL_URL_HOST}"     \
+                             -p "${HSQL_URL_PORT}"     \
+                             "${HSQL_URL_DATABASE}"
+    fi
+    
+}
+hsql_psql_useradd() {
+    local user="$1" pass="${2:-`hterm hidden 'Please specify a password> '`}"
+    hsql_psql_exec "CREATE USER ${user};" || true
+    hsql_psql_exec "alter user ${user} with password '${pass}';"
+}
+hsql_psql_new_database() {
+    local db="$1"
+    hsql_psql_exec "CREATE DATABASE ${db};" || true
+}
+hsql_psql_allow_user() {
+    local db="$1" user="$2"
+    hsql_psql_exec "grant all privileges on database ${db} to ${user};" || true
+    hsql_psql_exec "ALTER DATABASE ${db} OWNER TO ${user};" || true
+}
+hsql_psql_list_databases() {
+    hsql_psql_exec "\\l"
+}
+hsql_psql_dump_database() {
+    if test -n "${HSQL_URL_PASSWORD}";then
+        export PGPASSWORD="${HSQL_URL_PASSWORD}"
+    fi
+    pg_dump                       \
+        -U "${HSQL_URL_USERNAME}" \
+        -h "${HSQL_URL_HOST}"     \
+        -p "${HSQL_URL_PORT}"     \
+        "${1}"
+        
+}
+hsql_psql_drop_database() {
+    hsql_psql_exec <<EOF
+DROP DATABASE IF EXISTS ${database};
+EOF
+}
+
+
+
+
+
+
+## ---------------------------------------------------------------------------------
+## ---- MYSQL ----------------------------------------------------------------------
+## ---------------------------------------------------------------------------------
+hsql_mysql_interactive() {
+    mysql                             \
+        --user="${HSQL_URL_USERNAME}" \
+        --host="${HSQL_URL_HOST}"     \
+        --port="${HSQL_URL_PORT}"     \
+        ${HSQL_URL_DATABASE:+--database=${HSQL_URL_DATABASE}} \
+        --password="${HSQL_URL_PASSWORD}"
+}
+hsql_mysql_exec() {
+    local cmd="$*"
+    echo "${cmd}" | hsql_mysql_interactive
+}
+hsql_mysql_useradd() {
+    local user="$1" pass="${2:-`hterm hidden 'Please specify a password> '`}"
+    if hpkg -c void;then
+        hsql_mysql_exec "CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${pass}';
+                         SET PASSWORD FOR '${user}'@'%' =  PASSWORD('${pass}');"
+    else
+        hsql_mysql_exec "CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${pass}';
+                         ALTER USER '${user}'@'%' IDENTIFIED WITH mysql_native_password;
+                         SET PASSWORD FOR '${user}'@'%' = '${pass}';"
+    fi
+}
+hsql_mysql_new_database() {
+    local db="$1"
+    hlog info "Creating database ${db} if does not exist ..."
+    hsql_mysql_exec "CREATE DATABASE IF NOT EXISTS ${db};"
+}
+hsql_mysql_allow_user() {
+    local db="$1" user="$2"
+    hlog info "Allowing user ${user} to database ${db} ..."
+    hsql_mysql_exec "GRANT ALL privileges ON \`${db}\`.* TO '${user}'@'%';
+                     FLUSH PRIVILEGES;"
+}
+hsql_mysql_list_databases() {
+    hsql_mysql_exec "SHOW DATABASES;"
+}
+hsql_mysql_dump_database() {
+    mysqldump                             \
+        --user="${HSQL_URL_USERNAME}"     \
+        --host="${HSQL_URL_HOST}"         \
+        --port="${HSQL_URL_PORT}"         \
+        --password="${HSQL_URL_PASSWORD}" \
+        --databases "${1}"
+}
+hsql_mysql_drop_database() {
+    hlog info "Deleting ${1} database ..."
+    hsql_mysql_exec "DROP DATABASE IF EXISTS ${1};"
+}
+hsql_sudo() {
+    local pwd="`pwd`"
+    if test @"${pwd}" = @"root";then
+        cd /tmp
+    fi
+    if test -f /usr/bin/sudo;then
+        /usr/bin/sudo "$@"
+    elif test -f /usr/local/bin/sudo;then
+        /usr/local/bin/sudo "$@"
+    else
+        "`which sudo`" "$@"
+    fi
+    cd "`pwd`"
+}
+
+
+
+## -----------------------------------------------------------------------------------------
+hsql_calc_variables
+if test @"`basename "$0"`" = @"hsql";then
+    if test -n "$1";then
+        hsql "$@"
+    else
+        sed -n 's/^ *#h: \{0,1\}//p' "$0" | sed "s|\\\$0|`basename $0`|g"
+        echo ""
+        sed -n 's/^ *#l: \{0,2\}//p' "$0"
+   fi
+fi
