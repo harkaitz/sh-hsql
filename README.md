@@ -2,7 +2,7 @@
 
 This is a wrapper around SQL command line utilities.
 
-It depends on [sh-hutil](https://github.com/harkaitz/sh-hrest)
+It depends on [sh-hutil](https://github.com/harkaitz/sh-hutil).
 
 ## Help
 
