@@ -169,12 +169,15 @@ hsql_calc_variables() {
 ## ---- PSQL -----------------------------------------------------------------------
 ## ---------------------------------------------------------------------------------
 hsql_psql_interactive() {
-    if test -n "${HSQL_URL_PASSWORD}";then
+    local pwd="`pwd`"
+    if test -n "${HSQL_URL_PASSWORD}"; then
         export PGPASSWORD="${HSQL_URL_PASSWORD}"
     fi
     if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
-       test @"`whoami`"             = @"root"     && \
-       test @"${HSQL_URL_HOST}"     = @"127.0.0.1";then
+       test @"${HSQL_URL_HOST}"     = @"127.0.0.1"; then
+        if hsql_sudo -u "postgres" test ! -x "`pwd`"; then
+            cd /tmp
+        fi
         hsql_sudo -u "postgres" psql "${HSQL_URL_DATABASE}"
     else
         psql                          \
@@ -183,15 +186,19 @@ hsql_psql_interactive() {
             -p "${HSQL_URL_PORT}"     \
             "${HSQL_URL_DATABASE}"
     fi
+    cd "${pwd}"
 }
 hsql_psql_exec() {
-    if test -n "${HSQL_URL_PASSWORD}";then
+    local pwd="`pwd`"
+    if test -n "${HSQL_URL_PASSWORD}"; then
         export PGPASSWORD="${HSQL_URL_PASSWORD}"
     fi
     local cmd="$*"
     if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
-       test @"`whoami`"             = @"root"     && \
-       test @"${HSQL_URL_HOST}"     = @"127.0.0.1";then
+       test @"${HSQL_URL_HOST}"     = @"127.0.0.1"; then
+        if hsql_sudo -u "postgres" test ! -x "`pwd`"; then
+            cd /tmp
+        fi
         echo "${cmd}" | hsql_sudo -u "postgres" psql -a "${HSQL_URL_DATABASE}"
     else
         echo "${cmd}" | psql -a       \
@@ -200,7 +207,7 @@ hsql_psql_exec() {
                              -p "${HSQL_URL_PORT}"     \
                              "${HSQL_URL_DATABASE}"
     fi
-    
+    cd "${pwd}"
 }
 hsql_psql_useradd() {
     local user="$1" pass="${2:-`hterm hidden 'Please specify a password> '`}"
