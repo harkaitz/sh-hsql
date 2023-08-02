@@ -170,11 +170,9 @@ hsql_psql_interactive() {
     if test -n "${HSQL_URL_PASSWORD}"; then
         export PGPASSWORD="${HSQL_URL_PASSWORD}"
     fi
+    cd "/tmp"
     if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
        test @"${HSQL_URL_HOST}"     = @"127.0.0.1"; then
-        if hsql_sudo -u "postgres" test ! -x "`pwd`"; then
-            cd /tmp
-        fi
         hsql_sudo -u "postgres" psql "${HSQL_URL_DATABASE}"
     else
         psql                          \
@@ -191,11 +189,9 @@ hsql_psql_exec() {
         export PGPASSWORD="${HSQL_URL_PASSWORD}"
     fi
     local cmd="$*"
+    cd "/tmp"
     if test @"${HSQL_URL_USERNAME}" = @"postgres" && \
        test @"${HSQL_URL_HOST}"     = @"127.0.0.1"; then
-        if hsql_sudo -u "postgres" test ! -x "`pwd`"; then
-            cd /tmp
-        fi
         echo "${cmd}" | hsql_sudo -u "postgres" psql -a "${HSQL_URL_DATABASE}"
     else
         echo "${cmd}" | psql -a       \
@@ -235,9 +231,10 @@ hsql_psql_dump_database() {
         
 }
 hsql_psql_drop_database() {
-    hsql_psql_exec <<EOF
-DROP DATABASE IF EXISTS ${database};
-EOF
+    echo "Dropping ${database} database ..."
+    hsql_psql_exec "
+    DROP DATABASE IF EXISTS ${database};
+    "
 }
 
 
@@ -299,15 +296,13 @@ hsql_mysql_drop_database() {
 }
 hsql_sudo() {
     local pwd="`pwd`"
-    if test @"${pwd}" = @"root";then
-        cd /tmp
-    fi
+    cd "/tmp"
     if test -f /usr/bin/sudo;then
         /usr/bin/sudo "$@"
     elif test -f /usr/local/bin/sudo;then
         /usr/local/bin/sudo "$@"
     else
-        "`which sudo`" "$@"
+        "$(which sudo)" "$@"
     fi
     cd "`pwd`"
 }
