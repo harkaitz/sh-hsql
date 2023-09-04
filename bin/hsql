@@ -122,6 +122,10 @@ hsql_show_variables() {
     printf '%-30s: %s\n' HSQL_URL_PORT     "${HSQL_URL_PORT}"
 }
 hsql_calc_variables() {
+    if test -e /etc/profile.d/postgresql15-client.sh; then
+        . /etc/profile.d/postgresql15-client.sh
+    fi
+    
     ## The connection URL.
     HSQL_URL="${1:-${HSQL_URL}}"
     ## Protocol.
