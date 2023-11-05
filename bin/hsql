@@ -125,6 +125,9 @@ hsql_calc_variables() {
     if test -e /etc/profile.d/postgresql15-client.sh; then
         . /etc/profile.d/postgresql15-client.sh
     fi
+    if test -e ~/.env.sh; then
+        . ~/.env.sh
+    fi
     
     ## The connection URL.
     HSQL_URL="${1:-${HSQL_URL}}"
